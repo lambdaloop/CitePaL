@@ -236,8 +236,8 @@ def format_authors(authors):
         return "{} et al".format(authors[0]['name'])
 
 def format_paper(row):
-    return '<a href="{url}">{author_text}. ({year}) {title}. <i>{venue}</i></a>'.format(
-        author_text=format_authors(row['authors']), **row)
+    return '<a href="{url}">{author_text}. ({year_int}) {title}. <i>{venue}</i></a>'.format(
+        author_text=format_authors(row['authors']), year_int=int(row['year']), **row)
 
 def render_list(rows):
     if len(rows) == 0:
@@ -342,14 +342,24 @@ def render_paper():
 #     chart.save(out, format='json')
 #     return out.getvalue()
 
+def get_top_papers_html(textdf, topn=10):
+    subdf = textdf.iloc[:topn]
+    rows = [subdf.iloc[i].to_dict() for i in range(len(subdf))]
+    return render_list(rows)
+
+
 @app.route("/postgraph", methods=["POST"])
 def influential_refs_post():
     values = request.get_json()['ids']
     groups = [GROUP_CACHE[v] for v in values if v in GROUP_CACHE]
-    chart = get_ref_graph(groups)
+    chart, textdf = get_ref_graph(groups)
+    top_html = get_top_papers_html(textdf)
     out = io.StringIO()
     chart.save(out, format='json')
-    return out.getvalue()
+    dd = json.loads(out.getvalue())
+    dd['papers'] = top_html
+    # final = out.getvalue()[:-1] + ', "papers": "' + top_html + '"}'
+    return json.dumps(dd)
 
 def get_group_df(group):
     items = group.get_all_items()
@@ -363,7 +373,10 @@ def get_ref_df(source_df, group):
         pool = ThreadPool(processes=60)
         p = j.paperId
         source_title = j.title
-        ref_titles = get_references(p)['data']
+        try:
+            ref_titles = get_references(p)['data']
+        except KeyError:
+            continue
 
         ref_ids = [i['citedPaper']['paperId'] for i in ref_titles]
         ref_ids = [x for x in ref_ids if x is not None]
@@ -441,7 +454,7 @@ def get_ref_graph(user_data_groups = None):
     source = source_df[:5000].sort_values('shared_by')
     year_ticks = [int(i) for i in np.arange(1880,2030,10)]
 
-    pts = alt.selection(type="multi", encodings=['y','color'])
+    # pts = alt.selection(type="multi", encodings=['y','color'])
     # Top panel is scatter plot of temperature vs time
     points = alt.Chart(source).mark_point().encode(
         alt.X('year:N', title='Year',
@@ -458,46 +471,47 @@ def get_ref_graph(user_data_groups = None):
     ).properties(
         width=700,
         height=450
-    ).transform_filter(
-        pts
     )
+    # .transform_filter(
+    #     pts
+    # )
 
     scale = alt.Scale(domain=['theory', 'tools'],
                       range=['#249EA0', '#005F60'])
     color = alt.Color('modes:N', scale=scale, legend=None)
 
-    bars = alt.Chart(source.dropna()).transform_filter(
-        alt.FieldEqualPredicate(field='is_valid', equal=True)
-    ).mark_bar().encode(
-        y='value',
-        x='count()',
-        color=alt.condition(pts, color, alt.value('gray'))
-    ).properties(
-        width=200
-    ).add_selection(pts)
+    # bars = alt.Chart(source.dropna()).transform_filter(
+    #     alt.FieldEqualPredicate(field='is_valid', equal=True)
+    # ).mark_bar().encode(
+    #     y='value',
+    #     x='count()',
+    #     color=alt.condition(pts, color, alt.value('gray'))
+    # ).properties(
+    #     width=200
+    # ).add_selection(pts)
 
     # Base chart for data tables
     source_text = source.drop_duplicates('title', keep="first").sort_values('shared_by', ascending=False)
-    ranked_text = alt.Chart(source_text).mark_text().encode(
-        y=alt.Y('row_number:O',axis=None)
-    ).transform_window(
-        row_number='row_number()'
-    ).transform_filter(
-        pts
-    ).transform_window(
-        rank='rank(row_number)'
-    ).transform_filter(
-        alt.datum.rank<7
-    ).properties(
-        width = 10
-    )
+    # ranked_text = alt.Chart(source_text).mark_text().encode(
+    #     y=alt.Y('row_number:O',axis=None)
+    # ).transform_window(
+    #     row_number='row_number()'
+    # ).transform_filter(
+    #     pts
+    # ).transform_window(
+    #     rank='rank(row_number)'
+    # ).transform_filter(
+    #     alt.datum.rank<7
+    # ).properties(
+    #     width = 10
+    # )
 
     # Data Tables
-    year = ranked_text.encode(text='year:N').properties(title='Year')
-    title = ranked_text.encode(text='title').properties(title='Paper Title')
-    cites = ranked_text.encode(text='citationCount:Q').properties(title='Citations')
-    sharedby = ranked_text.encode(text='shared_by:Q').properties(title='Shared')
-    text = alt.hconcat(title,sharedby,cites,year) # Combine data tables
+    # year = ranked_text.encode(text='year:N').properties(title='Year')
+    # title = ranked_text.encode(text='title').properties(title='Paper Title')
+    # cites = ranked_text.encode(text='citationCount:Q').properties(title='Citations')
+    # sharedby = ranked_text.encode(text='shared_by:Q').properties(title='Shared')
+    # text = alt.hconcat(title,sharedby,cites,year) # Combine data tables
 
     # # # Build chart
     # chart_pt1 = alt.hconcat(
@@ -505,26 +519,26 @@ def get_ref_graph(user_data_groups = None):
     #     text,
     # )
 
-    chart = alt.vconcat(
-        text,
-        points
-    ).configure_title(
-        fontSize=20,
-        font='Courier',
-        anchor='start',
-        color='darkorange'
-    ).configure_legend(
-        labelLimit=0,
-        strokeColor='gray',
-        fillColor='#EEEEEE',
-        padding=10,
-        cornerRadius=10,
-        orient='bottom-left'
-    ).configure_view(
-        strokeWidth=0
-    )
+    # chart = alt.vconcat(
+    #     text,
+    #     points
+    # ).configure_title(
+    #     fontSize=20,
+    #     font='Courier',
+    #     anchor='start',
+    #     color='darkorange'
+    # ).configure_legend(
+    #     labelLimit=0,
+    #     strokeColor='gray',
+    #     fillColor='#EEEEEE',
+    #     padding=10,
+    #     cornerRadius=10,
+    #     orient='bottom-left'
+    # ).configure_view(
+    #     strokeWidth=0
+    # )
     
-    return chart
+    return points, source_text
 
 
 @app.route('/')
